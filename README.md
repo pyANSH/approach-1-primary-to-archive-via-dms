@@ -45,6 +45,24 @@ The IAM user credential provided to the backend needs the following permissions 
     ]
 }
 ```
+| if doesn't work
+```json
+{ 
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dms:ModifyReplicationTask",
+        "dms:StartReplicationTask",
+        "dms:DescribeReplicationTasks",
+        "dms:StopReplicationTask"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
 *Note: You can restrict `Resource` to the specific ARN of your DMS task for better security.*
 
 ### DMS Task Setup
