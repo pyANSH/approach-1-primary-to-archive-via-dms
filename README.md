@@ -1,4 +1,4 @@
-# Test Approach 2: Pub/Sub DB Archiving with AWS DMS
+# Test Approach 1: primary and archive DB with AWS DMS
 
 This project demonstrates a database archiving strategy using AWS Database Migration Service (DMS). Use this project to simulate a primary database filling up with data and offloading old data to an archive database using an on-demand DMS task.
 
