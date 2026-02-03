@@ -1,0 +1,32 @@
+version: '3.8'
+services:
+  primary-db:
+    image: postgres:15.2
+    container_name: primary_db_container
+    ports:
+      - "5175:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: primary
+    volumes:
+      - primary_data:/var/lib/postgresql/data
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=4", "-c", "max_wal_senders=4"]
+
+  archive-db:
+    image: postgres:15.2
+    container_name: archive_db_container
+    ports:
+      - "5176:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: archive
+    volumes:
+      - archive_data:/var/lib/postgresql/data
+    depends_on:
+      - primary-db
+
+volumes:
+  primary_data:
+  archive_data:
