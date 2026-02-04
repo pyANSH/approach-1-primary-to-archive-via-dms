@@ -1,0 +1,54 @@
+{
+  "rules": [
+    {
+      "rule-type": "selection",
+      "rule-id": "1",
+      "rule-name": "select-archive-tasks-view",
+      "object-locator": {
+        "schema-name": "public",
+        "table-name": "v_archive_tasks",
+        "table-type": "view"
+      },
+      "rule-action": "include",
+      "filters": []
+    },
+    {
+      "rule-type": "transformation",
+      "rule-id": "2",
+      "rule-name": "rename-archive-tasks-to-target",
+      "rule-target": "table",
+      "object-locator": {
+        "schema-name": "public",
+        "table-name": "v_archive_tasks"
+      },
+      "rule-action": "rename",
+      "value": "p1_task",
+      "old-value": null
+    },
+    {
+      "rule-type": "selection",
+      "rule-id": "3",
+      "rule-name": "select-archive-candidates-view",
+      "object-locator": {
+        "schema-name": "public",
+        "table-name": "v_archive_candidates",
+        "table-type": "view"
+      },
+      "rule-action": "include",
+      "filters": []
+    },
+    {
+      "rule-type": "transformation",
+      "rule-id": "4",
+      "rule-name": "rename-archive-candidates-to-target",
+      "rule-target": "table",
+      "object-locator": {
+        "schema-name": "public",
+        "table-name": "v_archive_candidates"
+      },
+      "rule-action": "rename",
+      "value": "p1_task_candidate",
+      "old-value": null
+    }
+  ]
+}

@@ -1,68 +1,16 @@
 const {
     DatabaseMigrationServiceClient,
-    ModifyReplicationTaskCommand,
     StartReplicationTaskCommand,
     DescribeReplicationTasksCommand,
-    ModifyReplicationConfigCommand,
     StartReplicationCommand,
     DescribeReplicationsCommand
 } = require('@aws-sdk/client-database-migration-service');
-const { primaryDB } = require('../config/database');
+const { primaryDB, archiveDB } = require('../config/database');
+const ArchiveBatch = require('../models/primary/ArchiveBatch');
 
 const dms = new DatabaseMigrationServiceClient({ region: process.env.AWS_REGION || 'ap-south-1' });
 
 const DMS_TASK_ARN = process.env.DMS_TASK_ARN;
-
-// Helper: Calculate cutoff date (3 months ago)
-function getCutoffDate() {
-    const date = new Date();
-    date.setMonth(date.getMonth() - 1);
-    return date.toISOString().split('T')[0]; // YYYY-MM-DD
-}
-
-// Helper: Build table mappings with dynamic date
-function buildTableMappings(cutoffDate) {
-    return JSON.stringify({
-        rules: [
-            {
-                'rule-type': 'selection',
-                'rule-id': '1',
-                'rule-name': 'select-old-tasks',
-                'object-locator': {
-                    'schema-name': 'public',
-                    'table-name': 'p1_task'
-                },
-                'rule-action': 'include',
-                filters: [{
-                    'filter-type': 'source',
-                    'column-name': 'created_at',
-                    'filter-conditions': [{
-                        'filter-operator': 'ste',
-                        value: cutoffDate
-                    }]
-                }]
-            },
-            {
-                'rule-type': 'selection',
-                'rule-id': '2',
-                'rule-name': 'select-old-candidates',
-                'object-locator': {
-                    'schema-name': 'public',
-                    'table-name': 'p1_task_candidate'
-                },
-                'rule-action': 'include',
-                filters: [{
-                    'filter-type': 'source',
-                    'column-name': 'created_at',
-                    'filter-conditions': [{
-                        'filter-operator': 'ste',
-                        value: cutoffDate
-                    }]
-                }]
-            }
-        ]
-    });
-}
 
 // Helper: Check if using Serverless DMS (Replication Config)
 function isServerless(arn) {
@@ -103,7 +51,7 @@ async function waitForDmsCompletion(arn) {
         if (status === 'failed') {
             const failureInfo = serverless
                 ? response.Replications?.[0]?.FailureDescription
-                : response.ReplicationTasks?.[0]?.ReplicationTaskStats; // or StatusMessage if available
+                : response.ReplicationTasks?.[0]?.ReplicationTaskStats;
 
             console.error('DMS failed. Details:', JSON.stringify(serverless ? response.Replications?.[0] : response.ReplicationTasks?.[0], null, 2));
             throw new Error(`DMS failed: ${failureInfo || status}`);
@@ -111,39 +59,6 @@ async function waitForDmsCompletion(arn) {
 
         // Wait 10 seconds before checking again
         await new Promise(resolve => setTimeout(resolve, 10000));
-    }
-}
-
-// Helper: Cleanup primary DB
-async function cleanupPrimaryDB(cutoffDate) {
-    const transaction = await primaryDB.transaction();
-
-    try {
-        const [candidatesResult] = await primaryDB.query(
-            `DELETE FROM "p1_task_candidate" WHERE "task_id" IN (SELECT "id" FROM "p1_task" WHERE "created_at" < :cutoffDate)`,
-            {
-                replacements: { cutoffDate },
-                transaction
-            }
-        );
-
-        const [tasksResult] = await primaryDB.query(
-            `DELETE FROM "p1_task" WHERE "created_at" < :cutoffDate`,
-            {
-                replacements: { cutoffDate },
-                transaction
-            }
-        );
-
-        await transaction.commit();
-
-        return {
-            deletedTasks: tasksResult?.rowCount || 0,
-            deletedCandidates: candidatesResult?.rowCount || 0
-        };
-    } catch (error) {
-        await transaction.rollback();
-        throw error;
     }
 }
 
@@ -172,10 +87,6 @@ async function waitForStableState(arn) {
 
         console.log(`Current DMS status: ${status}`);
 
-        // Stable states where we can proceed with modification or starting
-        // 'stopped', 'created', 'failed' (might need reset but we can try), 'ready'
-        // 'running' is stable but we might not want to modify active one without care, but for now we assume we can or we wait.
-        // Actually, for Serverless, you can't modify if it's deprovisioning.
         if (['stopped', 'created', 'failed', 'ready'].includes(status)) {
             console.log('DMS is in a stable state.');
             return;
@@ -186,10 +97,140 @@ async function waitForStableState(arn) {
     }
 }
 
-// Main job processor
-async function archiveMigrationJob() {
-    const cutoffDate = getCutoffDate();
-    console.log(`Starting archive migration for records before ${cutoffDate}`);
+// Helper: Cleanup primary DB using batch's cutoff date
+async function cleanupPrimaryDB(cutoffDate) {
+    const transaction = await primaryDB.transaction();
+
+    try {
+        // Delete candidates first (foreign key dependency)
+        const [candidatesResult] = await primaryDB.query(
+            `DELETE FROM "p1_task_candidate" WHERE "created_at" <= :cutoffDate`,
+            {
+                replacements: { cutoffDate },
+                transaction
+            }
+        );
+
+        // Then delete tasks
+        const [tasksResult] = await primaryDB.query(
+            `DELETE FROM "p1_task" WHERE "created_at" <= :cutoffDate`,
+            {
+                replacements: { cutoffDate },
+                transaction
+            }
+        );
+
+        await transaction.commit();
+
+        return {
+            deletedTasks: tasksResult?.rowCount || 0,
+            deletedCandidates: candidatesResult?.rowCount || 0
+        };
+    } catch (error) {
+        await transaction.rollback();
+        throw error;
+    }
+}
+
+// Create a new archive batch
+async function createArchiveBatch(cutoffDate) {
+    // Check if there's already a pending batch
+    const existingBatch = await ArchiveBatch.findOne({
+        where: { status: 'pending' }
+    });
+
+    if (existingBatch) {
+        throw new Error(`There's already a pending batch (ID: ${existingBatch.id}). Complete or cancel it first.`);
+    }
+
+    const batch = await ArchiveBatch.create({
+        cutoff_date: cutoffDate,
+        status: 'pending'
+    });
+
+    console.log(`Created archive batch ${batch.id} with cutoff date ${cutoffDate}`);
+    return batch;
+}
+
+// Get counts of records that will be archived
+async function getArchiveCounts(cutoffDate) {
+    const [[{ count: tasksCount }]] = await primaryDB.query(
+        `SELECT COUNT(*) as count FROM "p1_task" WHERE "created_at" <= :cutoffDate`,
+        { replacements: { cutoffDate } }
+    );
+
+    const [[{ count: candidatesCount }]] = await primaryDB.query(
+        `SELECT COUNT(*) as count FROM "p1_task_candidate" WHERE "created_at" <= :cutoffDate`,
+        { replacements: { cutoffDate } }
+    );
+
+    return {
+        tasksCount: parseInt(tasksCount),
+        candidatesCount: parseInt(candidatesCount)
+    };
+}
+
+// Verify that data has been moved to archive DB
+async function verifyArchivedData(cutoffDate, expectedCounts) {
+    console.log('Verifying data in archive database...');
+
+    const [[{ count: tasksCount }]] = await archiveDB.query(
+        `SELECT COUNT(*) as count FROM "p1_task" WHERE "created_at" <= :cutoffDate`,
+        { replacements: { cutoffDate } }
+    );
+
+    const [[{ count: candidatesCount }]] = await archiveDB.query(
+        `SELECT COUNT(*) as count FROM "p1_task_candidate" WHERE "created_at" <= :cutoffDate`,
+        { replacements: { cutoffDate } }
+    );
+
+    const archivedTasks = parseInt(tasksCount);
+    const archivedCandidates = parseInt(candidatesCount);
+
+    console.log(`Verification: Archive DB has ${archivedTasks} tasks and ${archivedCandidates} candidates (cutoff: ${cutoffDate})`);
+    console.log(`Expected (from Primary): ${expectedCounts.tasksCount} tasks and ${expectedCounts.candidatesCount} candidates`);
+
+    // We expect at least the counts we found in primary
+    if (archivedTasks < expectedCounts.tasksCount) {
+        throw new Error(`Data verification failed: Expected at least ${expectedCounts.tasksCount} tasks in archive, found ${archivedTasks}`);
+    }
+
+    if (archivedCandidates < expectedCounts.candidatesCount) {
+        throw new Error(`Data verification failed: Expected at least ${expectedCounts.candidatesCount} candidates in archive, found ${archivedCandidates}`);
+    }
+
+    console.log('Data verification successful: Archive DB contains all required data.');
+    return true;
+}
+
+// Main job processor - now uses batch from database
+async function archiveMigrationJob(batchId = null, isWebhook = false) {
+    // Get the batch to process
+    let batch;
+
+    if (batchId) {
+        batch = await ArchiveBatch.findByPk(batchId);
+        if (!batch) {
+            throw new Error(`Batch ${batchId} not found`);
+        }
+    } else {
+        // Get the latest pending batch
+        batch = await ArchiveBatch.findOne({
+            where: { status: 'pending' },
+            order: [['created_at', 'DESC']]
+        });
+    }
+
+    if (!batch) {
+        throw new Error('No pending archive batch found. Create one first using createArchiveBatch()');
+    }
+
+    if (batch.status !== 'pending') {
+        throw new Error(`Batch ${batch.id} is not in pending status (current: ${batch.status})`);
+    }
+
+    const cutoffDate = batch.cutoff_date;
+    console.log(`Starting archive migration for batch ${batch.id} (cutoff: ${cutoffDate})`);
 
     if (!DMS_TASK_ARN) {
         throw new Error('DMS_TASK_ARN environment variable is not set');
@@ -199,49 +240,45 @@ async function archiveMigrationJob() {
     console.log(`Detected DMS mode: ${serverless ? 'Serverless' : 'Standard'}`);
 
     try {
-        // Ensure stable before modifying
+        // // Update batch status to running
+        // await batch.update({
+        //     status: 'running',
+        //     started_at: new Date()
+        // });
+
+        // Get initial counts
+        const counts = await getArchiveCounts(cutoffDate);
+        console.log(`Records to archive: ${counts.tasksCount} tasks, ${counts.candidatesCount} candidates`);
+
+        // Ensure stable before starting
         await waitForStableState(DMS_TASK_ARN);
 
-        // Step 1: Update DMS task with dynamic date
-        console.log('Updating DMS table mappings...');
+        // Start DMS task - NO MODIFICATIONS NEEDED!
+        // DMS is pre-configured to read from v_archive_tasks and v_archive_candidates views
+        // The views dynamically filter based on the pending batch's cutoff_date
+        console.log('Starting DMS task...');
 
         if (serverless) {
             try {
-                const modifyCommand = new ModifyReplicationConfigCommand({
+                // Try reload-target first (standard for re-running full load tasks)
+                const startCommand = new StartReplicationCommand({
                     ReplicationConfigArn: DMS_TASK_ARN,
-                    TableMappings: buildTableMappings(cutoffDate)
+                    StartReplicationType: 'reload-target'
                 });
-                await dms.send(modifyCommand);
+                await dms.send(startCommand);
             } catch (err) {
-                if (err.name === 'InvalidParameterCombinationException' && err.message.includes('No modifications requested')) {
-                    console.log('Table mappings are already up to date.');
+                // If reload-target fails (e.g., task never ran), try start-replication
+                if (err.name === 'InvalidParameterCombinationException' || err.message.includes('start-replication')) {
+                    console.log('reload-target failed, trying start-replication...');
+                    const startCommand = new StartReplicationCommand({
+                        ReplicationConfigArn: DMS_TASK_ARN,
+                        StartReplicationType: 'start-replication'
+                    });
+                    await dms.send(startCommand);
                 } else {
                     throw err;
                 }
             }
-        } else {
-            const modifyCommand = new ModifyReplicationTaskCommand({
-                ReplicationTaskArn: DMS_TASK_ARN,
-                TableMappings: buildTableMappings(cutoffDate)
-            });
-            await dms.send(modifyCommand);
-        }
-
-        // Wait for task to be ready
-        // await new Promise(resolve => setTimeout(resolve, 5000)); // Replaced by robust wait
-
-        // Ensure stable before starting (modification might have triggered a state change)
-        await waitForStableState(DMS_TASK_ARN);
-
-        // Step 2: Start DMS task
-        console.log('Starting DMS task...');
-
-        if (serverless) {
-            const startCommand = new StartReplicationCommand({
-                ReplicationConfigArn: DMS_TASK_ARN,
-                StartReplicationType: 'start-replication'
-            });
-            await dms.send(startCommand);
         } else {
             const startCommand = new StartReplicationTaskCommand({
                 ReplicationTaskArn: DMS_TASK_ARN,
@@ -250,21 +287,84 @@ async function archiveMigrationJob() {
             await dms.send(startCommand);
         }
 
-        // Step 3: Wait for DMS to complete
+        // Wait for DMS to complete
         await waitForDmsCompletion(DMS_TASK_ARN);
 
-        // Step 4: Cleanup primary DB
-        console.log('Cleaning up primary DB...');
-        const result = await cleanupPrimaryDB(cutoffDate);
+        // Cleanup primary DB
+        let result = { deletedTasks: 0, deletedCandidates: 0 };
+        if (isWebhook) {
+            // Verify data before cleanup
+            await verifyArchivedData(cutoffDate, counts);
 
-        console.log(`Migration complete.`);
+            console.log('Cleaning up primary DB...');
+            result = await cleanupPrimaryDB(cutoffDate);
+        } else {
+            console.log('Skipping cleanup primary DB as it is not triggered by webhook...');
+        }
 
-        return result;
+        // Update batch as completed
+        await batch.update({
+            status: 'completed',
+            completed_at: new Date(),
+            archived_tasks_count: result.deletedTasks,
+            archived_candidates_count: result.deletedCandidates
+        });
+
+        console.log(`Migration complete. Archived ${result.deletedTasks} tasks and ${result.deletedCandidates} candidates.`);
+
+        return {
+            batchId: batch.id,
+            ...result
+        };
 
     } catch (error) {
         console.error('Archive migration failed:', error);
+
+        // Update batch as failed
+        await batch.update({
+            status: 'failed',
+            error_message: error.message
+        });
+
         throw error;
     }
 }
 
-module.exports = { archiveMigrationJob };
+// Get default cutoff date (1 month ago)
+function getDefaultCutoffDate() {
+    const date = new Date();
+    date.setMonth(date.getMonth() - 1);
+    return date.toISOString().split('T')[0]; // YYYY-MM-DD
+}
+
+module.exports = {
+    archiveMigrationJob,
+    createArchiveBatch,
+    getArchiveCounts,
+    getDefaultCutoffDate
+};
+
+/**
+ * USAGE:
+ * 
+ * 1. Create a batch (can be done via API or manually):
+ *    const batch = await createArchiveBatch('2026-01-01');
+ * 
+ * 2. Run the migration:
+ *    await archiveMigrationJob(); // Uses the pending batch
+ *    // OR
+ *    await archiveMigrationJob(batchId); // Uses specific batch
+ *    // OR
+ *    await archiveMigrationJob(null, true); // Triggered by webhook (performs cleanup)
+ * 
+ * DMS CONFIGURATION (ONE TIME):
+ * - Configure DMS to read from v_archive_tasks and v_archive_candidates views
+ * - No filters needed in DMS table mappings - views handle the filtering!
+ * 
+ * FLOW:
+ * 1. Create batch → cutoff_date stored in archive_batch table
+ * 2. Start DMS → reads from views which auto-filter by cutoff_date
+ * 3. Wait for completion
+ * 4. Cleanup primary DB
+ * 5. Mark batch as completed
+ */

@@ -16,6 +16,12 @@ function App() {
   const [activeEndpoint, setActiveEndpoint] = useState(null)
   const [activeName, setActiveName] = useState('')
 
+  // Archive Batch State
+  const [batches, setBatches] = useState([])
+  const [showBatchPanel, setShowBatchPanel] = useState(false)
+  const [batchPreview, setBatchPreview] = useState(null)
+  const [cutoffDate, setCutoffDate] = useState('')
+
   const startFetching = (endpoint, name) => {
       setData([])
       setCursor(0)
@@ -76,6 +82,79 @@ function App() {
     }
   }
 
+  // ============ ARCHIVE BATCH FUNCTIONS ============
+  
+  const fetchBatches = async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/archive-batch`)
+      setBatches(response.data)
+    } catch (error) {
+      console.error('Failed to fetch batches:', error)
+    }
+  }
+
+  const fetchPreview = async (date) => {
+    try {
+      const url = date 
+        ? `${API_BASE}/archive-batch/preview?cutoff_date=${date}`
+        : `${API_BASE}/archive-batch/preview`
+      const response = await axios.get(url)
+      setBatchPreview(response.data)
+    } catch (error) {
+      console.error('Failed to fetch preview:', error)
+    }
+  }
+
+  const createBatch = async () => {
+    setLoading(true)
+    setStatus({ message: 'Creating archive batch...', type: 'loading' })
+    try {
+      const payload = cutoffDate ? { cutoff_date: cutoffDate } : {}
+      const response = await axios.post(`${API_BASE}/archive-batch`, payload)
+      setStatus({ 
+        message: `Batch created! Will archive ${response.data.preview.tasksCount} tasks and ${response.data.preview.candidatesCount} candidates`, 
+        type: 'success' 
+      })
+      setCutoffDate('')
+      setBatchPreview(null)
+      fetchBatches()
+    } catch (error) {
+      setStatus({ 
+        message: `Error: ${error.response?.data?.error || error.message}`, 
+        type: 'error' 
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const runBatch = async (batchId) => {
+    setLoading(true)
+    setStatus({ message: `Running migration for batch #${batchId}...`, type: 'loading' })
+    try {
+      const response = await axios.post(`${API_BASE}/archive-batch/${batchId}/run`)
+      setStatus({ 
+        message: response.data.message || 'Migration completed!', 
+        type: 'success' 
+      })
+      fetchBatches()
+    } catch (error) {
+      setStatus({ 
+        message: `Error: ${error.response?.data?.error || error.message}`, 
+        type: 'error' 
+      })
+      fetchBatches()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const openBatchPanel = () => {
+    setShowBatchPanel(true)
+    fetchBatches()
+    fetchPreview()
+  }
+
   return (
     <div className="App">
       <h1>DB Management</h1>
@@ -111,11 +190,11 @@ function App() {
 
           <button 
             className="primary" 
-            style={{ backgroundColor: '#e67700' }}
-            onClick={() => handleAction('/run-archive-migration', 'Archive Migration')}
+            style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}
+            onClick={openBatchPanel}
             disabled={loading}
           >
-            Run Archive Migration
+            📦 Manage Archive Batches
           </button>
 
           <button 
@@ -136,6 +215,140 @@ function App() {
             Fetch Archive Data
           </button>
         </div>
+
+        {/* ============ ARCHIVE BATCH PANEL ============ */}
+        {showBatchPanel && (
+          <div className="batch-panel" style={{
+            marginTop: '2rem',
+            padding: '1.5rem',
+            background: 'rgba(251, 191, 36, 0.1)',
+            borderRadius: '12px',
+            border: '1px solid rgba(251, 191, 36, 0.3)',
+            textAlign: 'left'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, color: '#fbbf24' }}>📦 Archive Batch Management</h3>
+              <button 
+                onClick={() => setShowBatchPanel(false)}
+                style={{ background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '1.5rem', cursor: 'pointer' }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Create New Batch */}
+            <div style={{ 
+              background: 'rgba(0,0,0,0.2)', 
+              padding: '1rem', 
+              borderRadius: '8px',
+              marginBottom: '1rem'
+            }}>
+              <h4 style={{ margin: '0 0 1rem 0', color: '#fff' }}>Create New Batch</h4>
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '4px' }}>
+                    Cutoff Date (optional)
+                  </label>
+                  <input 
+                    type="date" 
+                    value={cutoffDate}
+                    onChange={(e) => {
+                      setCutoffDate(e.target.value)
+                      if (e.target.value) fetchPreview(e.target.value)
+                    }}
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      background: 'rgba(255,255,255,0.05)',
+                      color: '#fff',
+                      fontSize: '1rem'
+                    }}
+                  />
+                </div>
+                <button 
+                  className="primary"
+                  onClick={createBatch}
+                  disabled={loading}
+                  style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}
+                >
+                  Create Batch
+                </button>
+              </div>
+              
+              {batchPreview && (
+                <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(251,191,36,0.1)', borderRadius: '6px' }}>
+                  <span style={{ color: '#fbbf24' }}>Preview: </span>
+                  <span style={{ color: '#fff' }}>
+                    {batchPreview.tasksCount} tasks, {batchPreview.candidatesCount} candidates 
+                  </span>
+                  <span style={{ color: '#94a3b8' }}> (before {batchPreview.cutoff_date})</span>
+                </div>
+              )}
+            </div>
+
+            {/* Batch History */}
+            <div>
+              <h4 style={{ margin: '0 0 0.5rem 0', color: '#fff' }}>Batch History</h4>
+              {batches.length === 0 ? (
+                <p style={{ color: '#64748b', fontStyle: 'italic' }}>No batches yet</p>
+              ) : (
+                <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                  {batches.map(batch => (
+                    <div key={batch.id} style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '0.75rem',
+                      background: 'rgba(0,0,0,0.2)',
+                      borderRadius: '6px',
+                      marginBottom: '0.5rem'
+                    }}>
+                      <div>
+                        <span style={{ color: '#fbbf24', fontWeight: 'bold' }}>#{batch.id}</span>
+                        <span style={{ color: '#94a3b8', marginLeft: '1rem' }}>
+                          Cutoff: {batch.cutoff_date}
+                        </span>
+                        <span style={{ 
+                          marginLeft: '1rem',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          fontSize: '0.75rem',
+                          background: batch.status === 'completed' ? 'rgba(34,197,94,0.2)' : 
+                                     batch.status === 'failed' ? 'rgba(239,68,68,0.2)' :
+                                     batch.status === 'running' ? 'rgba(59,130,246,0.2)' : 'rgba(251,191,36,0.2)',
+                          color: batch.status === 'completed' ? '#22c55e' : 
+                                 batch.status === 'failed' ? '#ef4444' :
+                                 batch.status === 'running' ? '#3b82f6' : '#fbbf24'
+                        }}>
+                          {batch.status}
+                        </span>
+                        {batch.status === 'completed' && (
+                          <span style={{ color: '#64748b', marginLeft: '1rem', fontSize: '0.85rem' }}>
+                            ({batch.archived_tasks_count} tasks, {batch.archived_candidates_count} candidates)
+                          </span>
+                        )}
+                      </div>
+                      {batch.status === 'pending' && (
+                        <button
+                          onClick={() => runBatch(batch.id)}
+                          disabled={loading}
+                          style={{ 
+                            padding: '4px 12px', 
+                            fontSize: '0.85rem',
+                            background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
+                          }}
+                        >
+                          ▶ Run
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {data.length > 0 && (
           <>

@@ -15,8 +15,93 @@ const PORT = 3001;
 app.use(cors());
 app.use(express.json());
 
-const { archiveMigrationJob } = require('./jobs/archive-migration');
+const {
+  archiveMigrationJob,
+  createArchiveBatch,
+  getArchiveCounts,
+  getDefaultCutoffDate
+} = require('./jobs/archive-migration');
+const ArchiveBatch = require('./models/primary/ArchiveBatch');
 
+// ============ ARCHIVE BATCH MANAGEMENT ============
+app.post('/test-webhook', async (req, res) => {
+  try {
+    console.log('Webhook triggered, running migration with cleanup...');
+
+    // Pass isWebhook = true to enable cleanup
+    const result = await archiveMigrationJob(null, true);
+
+    res.json({
+      message: 'Webhook received, migration executed successfully',
+      result
+    });
+  } catch (err) {
+    console.error('Webhook failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+// Create new archive batch
+app.post('/archive-batch', async (req, res) => {
+  try {
+    const { cutoff_date } = req.body;
+    const cutoffDate = cutoff_date || getDefaultCutoffDate();
+
+    const batch = await createArchiveBatch(cutoffDate);
+    const counts = await getArchiveCounts(cutoffDate);
+
+    res.json({
+      message: 'Archive batch created successfully',
+      batch,
+      preview: counts
+    });
+  } catch (err) {
+    console.error('Create batch failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List all archive batches
+app.get('/archive-batch', async (req, res) => {
+  try {
+    const batches = await ArchiveBatch.findAll({
+      order: [['created_at', 'DESC']],
+      limit: 50
+    });
+    res.json(batches);
+  } catch (err) {
+    console.error('List batches failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get preview of what will be archived for a given cutoff date
+app.get('/archive-batch/preview', async (req, res) => {
+  try {
+    const cutoffDate = req.query.cutoff_date || getDefaultCutoffDate();
+    const counts = await getArchiveCounts(cutoffDate);
+    res.json({
+      cutoff_date: cutoffDate,
+      ...counts
+    });
+  } catch (err) {
+    console.error('Preview failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Run migration for a pending batch
+app.post('/archive-batch/:id/run', async (req, res) => {
+  try {
+    const batchId = parseInt(req.params.id);
+    const result = await archiveMigrationJob(batchId);
+    res.json({ message: 'Archive migration completed successfully', result });
+  } catch (err) {
+    console.error('Migration failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Run migration for the latest pending batch
 app.get('/run-archive-migration', async (req, res) => {
   try {
     const result = await archiveMigrationJob();
