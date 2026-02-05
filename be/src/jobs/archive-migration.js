@@ -322,7 +322,7 @@ async function archiveMigrationJob(batchId = null, isWebhook = false) {
 
         // Update batch as failed
         await batch.update({
-            status: 'failed',
+            // status: 'failed',
             error_message: error.message
         });
 

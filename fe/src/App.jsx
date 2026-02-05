@@ -164,7 +164,7 @@ function App() {
 
       <div className="card">
         <div className="button-group">
-          <button 
+          {/* <button 
             className="primary" 
             onClick={() => handleAction('/add-sample-data', 'Add Sample Data')}
             disabled={loading}
@@ -186,7 +186,7 @@ function App() {
             disabled={loading}
           >
             Clear Archive DB
-          </button>
+          </button> */}
 
           <button 
             className="primary" 
@@ -280,7 +280,7 @@ function App() {
                 <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(251,191,36,0.1)', borderRadius: '6px' }}>
                   <span style={{ color: '#fbbf24' }}>Preview: </span>
                   <span style={{ color: '#fff' }}>
-                    {batchPreview.tasksCount} tasks, {batchPreview.candidatesCount} candidates 
+                     {batchPreview.candidatesCount} candidates 
                   </span>
                   <span style={{ color: '#94a3b8' }}> (before {batchPreview.cutoff_date})</span>
                 </div>

@@ -56,7 +56,7 @@ module.exports = {
       WHERE t.created_at <= (
         SELECT cutoff_date 
         FROM archive_batch 
-        WHERE status = 'pending' 
+        WHERE status IN ('pending', 'running') 
         ORDER BY created_at DESC 
         LIMIT 1
       );
@@ -70,7 +70,7 @@ module.exports = {
       WHERE tc.created_at <= (
         SELECT cutoff_date 
         FROM archive_batch 
-        WHERE status = 'pending' 
+        WHERE status IN ('pending', 'running') 
         ORDER BY created_at DESC 
         LIMIT 1
       );

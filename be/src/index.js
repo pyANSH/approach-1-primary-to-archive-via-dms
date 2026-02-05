@@ -122,7 +122,7 @@ app.get('/add-sample-data', async (req, res) => {
     const tasksData = [];
 
     // Recent tasks
-    for (let i = 1; i <= 250; i++) {
+    for (let i = 1; i <= 2; i++) {
       const date = new Date(now.getFullYear(), now.getMonth(), Math.max(1, Math.floor(Math.random() * now.getDate())));
       tasksData.push({
         name: `Recent Task ${i}`,
@@ -132,7 +132,7 @@ app.get('/add-sample-data', async (req, res) => {
     }
 
     // Old tasks
-    for (let i = 1; i <= 250; i++) {
+    for (let i = 1; i <= 2; i++) {
       const date = new Date();
       date.setMonth(now.getMonth() - 3); // 3 months ago safely
       date.setDate(Math.floor(Math.random() * 28) + 1);
@@ -150,7 +150,7 @@ app.get('/add-sample-data', async (req, res) => {
     // Distributed across 500 tasks -> 2000 candidates per task
     // We will insert in batches of 5000 to avoid memory issues
     const totalCandidates = 1000000;
-    const candidatesPerTask = 2000;
+    const candidatesPerTask = 2;
     const batchSize = 10000;
     let candidateBuffer = [];
     let insertedCount = 0;

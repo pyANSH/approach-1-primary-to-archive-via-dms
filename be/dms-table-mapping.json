@@ -13,19 +13,6 @@
       "filters": []
     },
     {
-      "rule-type": "transformation",
-      "rule-id": "2",
-      "rule-name": "rename-archive-tasks-to-target",
-      "rule-target": "table",
-      "object-locator": {
-        "schema-name": "public",
-        "table-name": "v_archive_tasks"
-      },
-      "rule-action": "rename",
-      "value": "p1_task",
-      "old-value": null
-    },
-    {
       "rule-type": "selection",
       "rule-id": "3",
       "rule-name": "select-archive-candidates-view",
@@ -39,6 +26,18 @@
     },
     {
       "rule-type": "transformation",
+      "rule-id": "2",
+      "rule-name": "rename-archive-tasks-to-target",
+      "rule-target": "table",
+      "object-locator": {
+        "schema-name": "public",
+        "table-name": "v_archive_tasks"
+      },
+      "rule-action": "rename",
+      "value": "p1_task"
+    },
+    {
+      "rule-type": "transformation",
       "rule-id": "4",
       "rule-name": "rename-archive-candidates-to-target",
       "rule-target": "table",
@@ -47,8 +46,7 @@
         "table-name": "v_archive_candidates"
       },
       "rule-action": "rename",
-      "value": "p1_task_candidate",
-      "old-value": null
+      "value": "p1_task_candidate"
     }
   ]
 }
